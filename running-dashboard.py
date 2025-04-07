@@ -159,9 +159,9 @@ def functions(pl, timedelta):
                 (pl.col("date").dt.year() == year) & 
                 (pl.col("official_time").is_not_null())
             )
-            .select("official_pace")
+            .select("official_pace_in_seconds")
             .mean()
-            .select("official_pace")
+            .select("official_pace_in_seconds")
             .to_dict(as_series=False)
         )
         _output_dict = {year: _output}
@@ -269,7 +269,7 @@ def yearly_metrics_display(mo, select_year, timedelta, yearly_metrics):
     )
 
 
-@app.cell(disabled=True, hide_code=True)
+@app.cell(hide_code=True)
 def _(alt, df_runs, mo, pl, select_year):
     _df = (
         df_runs
@@ -277,7 +277,7 @@ def _(alt, df_runs, mo, pl, select_year):
             (pl.col("is_race") == False) & 
             (pl.col("date").dt.year() == select_year.value)
         )
-        .select("date", "time", "distance_miles", "mins_per_mile")
+        .select("date", "time_in_secs", "distance_miles", "secs_per_mile")
     )
 
     _input = df_runs.filter(pl.col("date").dt.year() == select_year.value).select("date", "distance_miles")
@@ -375,26 +375,15 @@ def race_history_via_google_sheets(gspread, pl):
     _sh = _gc.open("Race History")
     _worksheet = _sh.sheet1
 
-    #official_race_results_df_import = (
-    #    pl.DataFrame(_worksheet.get_all_records())
-    #    .with_columns(
-    #        pl.col("date").str.to_date(strict=False),
-    #        pl.col("official_time", "official_pace").str.to_time("%H:%M:%S", strict=False),
-    #        cs.starts_with('splits_').str.to_time("%H:%M:%S", strict=False)
-    #    )
-    #)
+    official_race_results_df_import = pl.DataFrame(_worksheet.get_all_records()).with_columns(pl.col("date").str.to_date())
 
-    (
-        pl.DataFrame(_worksheet.get_all_records())
-        #.with_columns(
-        #    pl.col("date").str.to_date(strict=False),
-        #    pl.col("official_time", "official_pace").cast(pl.Duration),)
-        #    #cs.starts_with('splits_').str.to_time("%H:%M:%S", strict=False)
+    race_schedule = official_race_results_df_import.filter(pl.col("official_time").is_null())
+    official_race_results_df = official_race_results_df_import.filter(pl.col("official_time").is_not_null())
+    return (
+        official_race_results_df,
+        official_race_results_df_import,
+        race_schedule,
     )
-
-    #race_schedule = official_race_results_df_import.filter(pl.col("official_time").is_null())
-    #official_race_results_df = official_race_results_df_import.filter(pl.col("official_time").is_not_null())
-    return
 
 
 @app.cell
@@ -422,33 +411,8 @@ def yearly_metrics_generation(
 
 
 @app.cell
-def _(official_race_results_df_import, pl, year):
-    #def _get_avg_race_pace(df: pl.DataFrame, year: int) -> dict:
-    #    _output = (
-    #        df
-    #        .filter(
-    #            (pl.col("date").dt.year() == year) & 
-    #            (pl.col("official_time").is_not_null())
-    #        )
-    #        .select("official_pace")
-    #        .mean()
-    #        .select("official_pace")
-    #        .to_dict(as_series=False)
-    #    )
-    #    _output_dict = {year: _output}
-    #    return _output
-
-    (
-        official_race_results_df_import
-        .filter(
-            (pl.col("date").dt.year() == year) & 
-            (pl.col("official_time").is_not_null())
-        )
-        .select("official_pace")
-        .mean()
-        #.select("official_pace")
-        #.to_dict(as_series=False)
-    )
+def _(df_runs):
+    df_runs
     return
 
 
