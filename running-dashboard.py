@@ -66,7 +66,7 @@ def strava_api_client(Client, json, time):
 
 
 @app.cell(hide_code=True)
-def functions(pl, timedelta):
+def functions(official_race_results_df, pl, timedelta):
     def get_total_miles(df: pl.DataFrame ,year: int) -> dict:
         _output = (
             df
@@ -91,7 +91,7 @@ def functions(pl, timedelta):
             .with_columns(
                 pl.col("secs_per_mile")
                 .map_elements(lambda n: str(timedelta(seconds=n)), return_dtype=pl.String)
-                .alias("mins_per_mile"))
+                .alias("avg_run_pace_mins_per_mile"))
             .drop("secs_per_mile")
             .to_dict(as_series=False)
         )
@@ -154,14 +154,19 @@ def functions(pl, timedelta):
         }
         """
         _output = (
-            df
+            official_race_results_df
             .filter(
                 (pl.col("date").dt.year() == year) & 
-                (pl.col("official_time").is_not_null())
+                (pl.col("official_time_in_seconds").is_not_null())
             )
             .select("official_pace_in_seconds")
             .mean()
-            .select("official_pace_in_seconds")
+            .with_columns(pl.col("official_pace_in_seconds").round(0))
+            .with_columns(
+                pl.col("official_pace_in_seconds")
+                .map_elements(lambda n: str(timedelta(seconds=n)), return_dtype=pl.String)
+                .alias("avg_race_pace_mins_per_mile"))
+            .drop("official_pace_in_seconds")
             .to_dict(as_series=False)
         )
         _output_dict = {year: _output}
@@ -201,18 +206,13 @@ def _(mo, yearly_metrics):
     return (select_year,)
 
 
-@app.cell(disabled=True, hide_code=True)
-def yearly_metrics_display(mo, select_year, timedelta, yearly_metrics):
+@app.cell(hide_code=True)
+def yearly_metrics_display(mo, select_year, yearly_metrics):
     total_miles_value = "{:,.2f}".format(yearly_metrics[select_year.value]["distance_miles"][0])
-
-    avg_run_pace_value_timedelta = yearly_metrics[select_year.value]["mins_per_mile"][0]
-    avg_run_pace_value = yearly_metrics[select_year.value]["mins_per_mile"][0] - timedelta(microseconds=avg_run_pace_value_timedelta.microseconds)
-
+    avg_run_pace_value = yearly_metrics[select_year.value]["avg_run_pace_mins_per_mile"][0]
     no_of_races_ran_value = yearly_metrics[select_year.value]["no_of_races"][0]
     no_of_race_miles_ran_value = "{:,.2f}".format(yearly_metrics[select_year.value]["race_miles"][0])
-
-    # Debug - This value needs to have the microseconds sliced off of it so that it displays as 00:00 /mile
-    avg_race_pace_value = yearly_metrics[select_year.value]["official_pace"][0]
+    avg_race_pace_value = yearly_metrics[select_year.value]["avg_race_pace_mins_per_mile"][0]
 
     total_miles_stat = mo.stat(
         label="Total Miles",
@@ -259,7 +259,6 @@ def yearly_metrics_display(mo, select_year, timedelta, yearly_metrics):
         avg_race_pace_value,
         avg_run_pace_stat,
         avg_run_pace_value,
-        avg_run_pace_value_timedelta,
         no_of_race_miles_ran_stat,
         no_of_race_miles_ran_value,
         no_of_races_ran_stat,
@@ -270,7 +269,7 @@ def yearly_metrics_display(mo, select_year, timedelta, yearly_metrics):
 
 
 @app.cell(hide_code=True)
-def _(alt, df_runs, mo, pl, select_year):
+def _(alt, df_runs, mo, pl, select_year, timedelta):
     _df = (
         df_runs
         .filter(
@@ -278,6 +277,12 @@ def _(alt, df_runs, mo, pl, select_year):
             (pl.col("date").dt.year() == select_year.value)
         )
         .select("date", "time_in_secs", "distance_miles", "secs_per_mile")
+        .with_columns(pl.col("time_in_secs", "secs_per_mile").round(0))
+        .with_columns(
+            pl.col("time_in_secs", "secs_per_mile")
+            .map_elements(lambda n: str(timedelta(seconds=n)), return_dtype=pl.String)
+        )
+        .rename({"time_in_secs": "time", "secs_per_mile": "pace"})
     )
 
     _input = df_runs.filter(pl.col("date").dt.year() == select_year.value).select("date", "distance_miles")
@@ -375,10 +380,16 @@ def race_history_via_google_sheets(gspread, pl):
     _sh = _gc.open("Race History")
     _worksheet = _sh.sheet1
 
-    official_race_results_df_import = pl.DataFrame(_worksheet.get_all_records()).with_columns(pl.col("date").str.to_date())
+    official_race_results_df_import = (
+        pl.DataFrame(_worksheet.get_all_records())
+        .with_columns(
+            pl.col("date").str.to_date(),
+            pl.col("official_time_in_seconds", "official_pace_in_seconds").cast(pl.Int32, strict=False)
+        )
+    )
 
     race_schedule = official_race_results_df_import.filter(pl.col("official_time").is_null())
-    official_race_results_df = official_race_results_df_import.filter(pl.col("official_time").is_not_null())
+    official_race_results_df = official_race_results_df_import.filter(pl.col("official_time_in_seconds").is_not_null())
     return (
         official_race_results_df,
         official_race_results_df_import,
@@ -408,12 +419,6 @@ def yearly_metrics_generation(
 
         yearly_metrics[year] = _output_total_miles | _output_avg_run_pace | _output_no_of_races | _output_race_miles | _output_avg_race_pace
     return year, yearly_metrics
-
-
-@app.cell
-def _(df_runs):
-    df_runs
-    return
 
 
 if __name__ == "__main__":
