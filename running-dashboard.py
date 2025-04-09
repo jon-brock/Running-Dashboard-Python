@@ -1,10 +1,10 @@
 import marimo
 
-__generated_with = "0.12.4"
+__generated_with = "0.12.5"
 app = marimo.App(width="medium", app_title="The Mustachioed Runner")
 
 
-@app.cell(hide_code=True)
+@app.cell
 def session_configs():
     import altair as alt
     import gspread
@@ -13,7 +13,7 @@ def session_configs():
     import polars as pl
     import polars.selectors as cs
     import time
-    from datetime import datetime, timedelta
+    from datetime import datetime, timedelta, date
     from great_tables import GT
     from stravalib import Client
     return (
@@ -21,6 +21,7 @@ def session_configs():
         GT,
         alt,
         cs,
+        date,
         datetime,
         gspread,
         json,
@@ -31,7 +32,7 @@ def session_configs():
     )
 
 
-@app.cell(hide_code=True)
+@app.cell
 def strava_api_client(Client, json, time):
     client = Client()
 
@@ -65,7 +66,7 @@ def strava_api_client(Client, json, time):
     return client, client_id, client_secret, refresh_response, strava_token
 
 
-@app.cell(hide_code=True)
+@app.cell
 def functions(official_race_results_df, pl, timedelta):
     def get_total_miles(df: pl.DataFrame ,year: int) -> dict:
         _output = (
@@ -180,7 +181,7 @@ def functions(official_race_results_df, pl, timedelta):
     )
 
 
-@app.cell(hide_code=True)
+@app.cell
 def _(mo):
     mo.vstack([
         mo.md("# **The Mustachioed Runner**"),
@@ -189,7 +190,7 @@ def _(mo):
     return
 
 
-@app.cell(hide_code=True)
+@app.cell
 def _(mo, yearly_metrics):
     select_year = mo.ui.dropdown(
         options=yearly_metrics.keys(),
@@ -206,7 +207,7 @@ def _(mo, yearly_metrics):
     return (select_year,)
 
 
-@app.cell(hide_code=True)
+@app.cell
 def yearly_metrics_display(mo, select_year, yearly_metrics):
     total_miles_value = "{:,.2f}".format(yearly_metrics[select_year.value]["distance_miles"][0])
     avg_run_pace_value = yearly_metrics[select_year.value]["avg_run_pace_mins_per_mile"][0]
@@ -268,7 +269,7 @@ def yearly_metrics_display(mo, select_year, yearly_metrics):
     )
 
 
-@app.cell(hide_code=True)
+@app.cell
 def _(alt, df_runs, mo, pl, select_year, timedelta):
     _df = (
         df_runs
@@ -288,8 +289,8 @@ def _(alt, df_runs, mo, pl, select_year, timedelta):
     _input = df_runs.filter(pl.col("date").dt.year() == select_year.value).select("date", "distance_miles")
 
     _bar_chart = alt.Chart(data=_input).mark_bar().encode(
-        x='date',
-        y='distance_miles'
+        x=alt.X('date', title="", scale=alt.Scale(nice={'interval': 'day', 'step': 7})),
+        y=alt.Y('distance_miles', title="No. of Miles")
     )
 
     mo.hstack(
@@ -303,7 +304,7 @@ def _(alt, df_runs, mo, pl, select_year, timedelta):
     return
 
 
-@app.cell(hide_code=True)
+@app.cell
 def _(df_runs_import, pl):
     df_runs = (
         df_runs_import
@@ -344,7 +345,7 @@ def _(df_runs_import, pl):
     return (df_runs,)
 
 
-@app.cell(hide_code=True)
+@app.cell
 def strava_import(client, pl):
     _data = []
     for activity in client.get_activities(after="2021-12-31"):
@@ -374,7 +375,7 @@ def strava_import(client, pl):
     return activity, df_rides_import, df_runs_import
 
 
-@app.cell(hide_code=True)
+@app.cell
 def race_history_via_google_sheets(gspread, pl):
     _gc = gspread.service_account("./service_account.json")
     _sh = _gc.open("Race History")
@@ -419,6 +420,42 @@ def yearly_metrics_generation(
 
         yearly_metrics[year] = _output_total_miles | _output_avg_run_pace | _output_no_of_races | _output_race_miles | _output_avg_race_pace
     return year, yearly_metrics
+
+
+@app.cell
+def _(df_runs, pl):
+    (
+        df_runs
+        .select("date")
+        .filter(pl.col("date").dt.year() == 2025)
+        .with_columns(pl.col("date").dt.week().alias("week"))
+        .upsample(time_column="date", every="1d")
+    )
+    return
+
+
+@app.cell
+def _(date, pl):
+    weekly_x_axis_labels = (
+        pl.DataFrame(
+            pl.date_range(
+                start=date(2024, 12, 30),
+                end=date(2025, 12, 31),
+                interval="1d",
+                eager=True
+            ).alias("date")
+        ).with_columns(
+            pl.col("date").dt.week().alias("week_no"),
+            pl.col("date").dt.weekday().alias("day_of_week")
+        )
+        .group_by("week_no", maintain_order=True)
+        .first()
+        .drop("week_no", "day_of_week")
+        .to_series()
+    )
+
+    weekly_x_axis_labels
+    return (weekly_x_axis_labels,)
 
 
 if __name__ == "__main__":
